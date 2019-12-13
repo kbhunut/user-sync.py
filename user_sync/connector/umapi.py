@@ -52,6 +52,9 @@ class UmapiConnector(object):
         self.trusted = caller_config.get_bool('trusted', True)
         if self.trusted is None:
             self.trusted = False
+        self.do_not_sync = caller_config.get_bool('do_not_sync', True)
+        if self.do_not_sync is None:
+            self.do_not_sync = False
         builder = user_sync.config.OptionsBuilder(caller_config)
         builder.set_string_value('logger_name', self.name)
         builder.set_bool_value('test_mode', False)
@@ -349,7 +352,7 @@ class ActionManager(object):
         Note items as sent, log any processing errors, and invoke any callbacks
         :param total_sent: number of sent items from queue, must be >= 0
         :param batch_error: exception for a batch-level error that affected all items, if there was one
-        :return: 
+        :return:
         """
         # update queue
         sent_items, self.items = self.items[:total_sent], self.items[total_sent:]

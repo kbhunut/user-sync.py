@@ -232,10 +232,10 @@ class RuleProcessor(object):
             self.action_summary['unchanged_user_count'] = 0
         else:
             self.action_summary['unchanged_user_count'] = (
-                self.action_summary['primary_users_read'] -
-                self.action_summary['excluded_user_count'] -
-                self.action_summary['updated_user_count'] -
-                self.action_summary['primary_strays_processed']
+                    self.action_summary['primary_users_read'] -
+                    self.action_summary['excluded_user_count'] -
+                    self.action_summary['updated_user_count'] -
+                    self.action_summary['primary_strays_processed']
             )
         # find out the number of users created in the primary and secondary umapis
         self.action_summary['primary_users_created'] = len(self.primary_users_created)
@@ -405,7 +405,7 @@ class RuleProcessor(object):
 
                 # invoke the customer's hook code
                 self.log_after_mapping_hook_scope(before_call=True)
-                exec(options['after_mapping_hook'], self.after_mapping_hook_scope)
+                exec (options['after_mapping_hook'], self.after_mapping_hook_scope)
                 self.log_after_mapping_hook_scope(after_call=True)
 
                 # copy modified attributes back to the user object
@@ -470,43 +470,49 @@ class RuleProcessor(object):
             verb = "Sync"
         exclude_unmapped_users = self.will_exclude_unmapped_users()
         # first sync the primary connector, so the users get created in the primary
-        if umapi_connectors.get_secondary_connectors():
-            self.logger.debug('%sing users to primary umapi...', verb)
-        else:
-            self.logger.debug('%sing users to umapi...', verb)
         umapi_info, umapi_connector = self.get_umapi_info(PRIMARY_UMAPI_NAME), umapi_connectors.get_primary_connector()
-        if self.push_umapi:
-            primary_adds_by_user_key = umapi_info.get_desired_groups_by_user_key()
+        if(not umapi_connector.do_not_sync):
+            if umapi_connectors.get_secondary_connectors():
+                self.logger.debug('%sing users to primary umapi...', verb)
+            else:
+                self.logger.debug('%sing users to umapi...', verb)
+            if self.push_umapi:
+                primary_adds_by_user_key = umapi_info.get_desired_groups_by_user_key()
+            else:
+                primary_adds_by_user_key = self.update_umapi_users_for_connector(umapi_info, umapi_connector)
+            for user_key, groups_to_add in six.iteritems(primary_adds_by_user_key):
+                if exclude_unmapped_users and not groups_to_add:
+                    # If user is not part of any group and ignore outcast is enabled. Do not create user.
+                    continue
+                # We always create every user in the primary umapi, because it's believed to own the directories.
+                self.logger.info('Creating user with user key: %s', user_key)
+                self.primary_users_created.add(user_key)
+                self.create_umapi_user(user_key, groups_to_add, umapi_info, umapi_connector)
         else:
-            primary_adds_by_user_key = self.update_umapi_users_for_connector(umapi_info, umapi_connector)
-        for user_key, groups_to_add in six.iteritems(primary_adds_by_user_key):
-            if exclude_unmapped_users and not groups_to_add:
-                # If user is not part of any group and ignore outcast is enabled. Do not create user.
-                continue
-            # We always create every user in the primary umapi, because it's believed to own the directories.
-            self.logger.info('Creating user with user key: %s', user_key)
-            self.primary_users_created.add(user_key)
-            self.create_umapi_user(user_key, groups_to_add, umapi_info, umapi_connector)
+            self.logger.info('Skipped primary umapi sync')
 
         # then sync the secondary connectors
         for umapi_name, umapi_connector in six.iteritems(umapi_connectors.get_secondary_connectors()):
-            umapi_info = self.get_umapi_info(umapi_name)
-            if len(umapi_info.get_mapped_groups()) == 0:
-                continue
-            self.logger.debug('%sing users to secondary umapi %s...', verb, umapi_name)
-            if self.push_umapi:
-                secondary_adds_by_user_key = umapi_info.get_desired_groups_by_user_key()
+            if (not umapi_connector.do_not_sync):
+                umapi_info = self.get_umapi_info(umapi_name)
+                if len(umapi_info.get_mapped_groups()) == 0:
+                    continue
+                self.logger.debug('%sing users to secondary umapi %s...', verb, umapi_name)
+                if self.push_umapi:
+                    secondary_adds_by_user_key = umapi_info.get_desired_groups_by_user_key()
+                else:
+                    secondary_adds_by_user_key = self.update_umapi_users_for_connector(umapi_info, umapi_connector)
+                for user_key, groups_to_add in six.iteritems(secondary_adds_by_user_key):
+                    # We only create users who have group mappings in the secondary umapi
+                    if groups_to_add:
+                        self.logger.info('Adding user to umapi %s with user key: %s', umapi_name, user_key)
+                        self.secondary_users_created.add(user_key)
+                        if user_key not in self.primary_users_created:
+                            # We pushed an existing user to a secondary in order to update his groups
+                            self.updated_user_keys.add(user_key)
+                        self.create_umapi_user(user_key, groups_to_add, umapi_info, umapi_connector)
             else:
-                secondary_adds_by_user_key = self.update_umapi_users_for_connector(umapi_info, umapi_connector)
-            for user_key, groups_to_add in six.iteritems(secondary_adds_by_user_key):
-                # We only create users who have group mappings in the secondary umapi
-                if groups_to_add:
-                    self.logger.info('Adding user to umapi %s with user key: %s', umapi_name, user_key)
-                    self.secondary_users_created.add(user_key)
-                    if user_key not in self.primary_users_created:
-                        # We pushed an existing user to a secondary in order to update his groups
-                        self.updated_user_keys.add(user_key)
-                    self.create_umapi_user(user_key, groups_to_add, umapi_info, umapi_connector)
+                self.logger.info('Skipped %s secondary umapi sync', umapi_name)
 
     def create_umapi_groups(self, umapi_connectors):
         """
@@ -516,7 +522,7 @@ class RuleProcessor(object):
         :type umapi_connectors: UmapiConnectors
         """
         for umapi_connector in umapi_connectors.connectors:
-            umapi_name = None if umapi_connector.name.split('.')[-1] == 'primary'\
+            umapi_name = None if umapi_connector.name.split('.')[-1] == 'primary' \
                 else umapi_connector.name.split('.')[-1]
             if umapi_name == 'umapi':
                 umapi_name = None
@@ -628,29 +634,28 @@ class RuleProcessor(object):
         # do the secondary umapis first, in case we are deleting user accounts from the primary umapi at the end
         for umapi_name, umapi_connector in six.iteritems(umapi_connectors.get_secondary_connectors()):
             secondary_strays = self.get_stray_keys(umapi_name)
-            for user_key in primary_strays:
-                if user_key in secondary_strays:
-                    commands = get_commands(user_key)
-                    if disentitle_strays:
-                        self.logger.info('Removing all adobe groups in %s for Adobe-only user: %s',
+            for user_key in secondary_strays:
+                commands = get_commands(user_key)
+                if disentitle_strays:
+                    self.logger.info('Removing all adobe groups in %s for Adobe-only user: %s',
+                                     umapi_name, user_key)
+                    commands.remove_all_groups()
+                elif remove_strays or delete_strays:
+                    self.logger.info('Removing Adobe-only user from %s: %s',
+                                     umapi_name, user_key)
+                    commands.remove_from_org(False)
+                elif manage_stray_groups:
+                    groups_to_remove = secondary_strays[user_key]
+                    if groups_to_remove:
+                        self.logger.info('Removing mapped groups in %s from Adobe-only user: %s',
                                          umapi_name, user_key)
-                        commands.remove_all_groups()
-                    elif remove_strays or delete_strays:
-                        self.logger.info('Removing Adobe-only user from %s: %s',
-                                         umapi_name, user_key)
-                        commands.remove_from_org(False)
-                    elif manage_stray_groups:
-                        groups_to_remove = secondary_strays[user_key]
-                        if groups_to_remove:
-                            self.logger.info('Removing mapped groups in %s from Adobe-only user: %s',
-                                             umapi_name, user_key)
-                            commands.remove_groups(groups_to_remove)
-                        else:
-                            continue
+                        commands.remove_groups(groups_to_remove)
                     else:
-                        # haven't done anything, don't send commands
                         continue
-                    umapi_connector.send_commands(commands)
+                else:
+                    # haven't done anything, don't send commands
+                    continue
+                umapi_connector.send_commands(commands)
             # make sure the commands for each umapi are executed before moving to the next
             umapi_connector.get_action_manager().flush()
 
@@ -879,7 +884,7 @@ class RuleProcessor(object):
             desired_groups = user_to_group_map.pop(user_key, None) or set()
 
             # check for excluded users
-            if self.is_umapi_user_excluded(in_primary_org, user_key, current_groups):
+            if self.is_umapi_user_excluded(in_primary_org, user_key, current_groups, umapi_connector.trusted):
                 continue
 
             self.map_email_override(umapi_user)
@@ -907,6 +912,13 @@ class RuleProcessor(object):
                 if process_groups:
                     groups_to_add = desired_groups - current_groups
                     groups_to_remove = (current_groups - desired_groups) & umapi_info.get_mapped_groups()
+
+                if umapi_connector.trusted and len(desired_groups) is 0 and attribute_differences == {}:
+                    # Check for Admin Roles. If user have admin role do not process as a stray.
+                    # This will prevent UST removing Admin from Secondary Console.
+                    # Admin will get remove from Secondary when they no longer exist in primary
+                    if any(g.startswith('_') for g in current_groups) == False:
+                        self.add_stray(umapi_info.get_name(), user_key)
 
             # Finally, execute the attribute and group adjustments
             self.update_umapi_user(umapi_info, user_key, umapi_connector,
@@ -936,8 +948,8 @@ class RuleProcessor(object):
                 umapi_users_iters.append(umapi_connector.iter_users(in_group=group.get_group_name()))
         return chain.from_iterable(umapi_users_iters)
 
-    def is_umapi_user_excluded(self, in_primary_org, user_key, current_groups):
-        if in_primary_org:
+    def is_umapi_user_excluded(self, in_primary_org, user_key, current_groups, console_trusted=False):
+        if in_primary_org or console_trusted:
             self.primary_user_count += 1
             # in the primary umapi, we actually check the exclusion conditions
             identity_type, username, domain = self.parse_user_key(user_key)
@@ -973,7 +985,6 @@ class RuleProcessor(object):
                 normalized_group_name = normalize_string(group_name)
                 result.add(normalized_group_name)
         return result
-
 
     def get_user_attribute_difference(self, directory_user, umapi_user):
         differences = {}
